@@ -15,6 +15,9 @@ Codename One already has a fantastic WYSIWYG GUI builder.  Why is this even nece
 
 I created this library because sometimes I want to express my UI structure using code or text.  The XML produced by the resource editor is not meant to be edited by humans.  Using Java directly to describe a component hierarchy quickly turns into a mess that is difficult to maintain.  I wanted a format that was simple to be hand-coded, and provided a simple birds-eye view of the UI component hierarchy.
 
+##License
+
+[Apache 2.0](http://www.apache.org/licenses/LICENSE-2.0.txt)
 
 ##Dependencies
 
