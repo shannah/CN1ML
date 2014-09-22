@@ -48,5 +48,7 @@ class CN1MLTest
     cls = writer.resolveLayoutDirective table
     assertEquals "Class should be TableLayout() but found #{cls}", 'TableLayout(1, 1)', cls
   end
+  
+  
 end
 
