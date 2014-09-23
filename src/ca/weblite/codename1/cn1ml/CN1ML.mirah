@@ -6,6 +6,7 @@ import org.jsoup.nodes.Node
 import java.io.ByteArrayInputStream
 import java.nio.charset.StandardCharsets
 import org.jsoup.nodes.TextNode
+import org.jsoup.nodes.DataNode
 import org.jsoup.Jsoup
 
 
@@ -63,88 +64,247 @@ class CN1ML
     @className=className
     
   end
-
-
-  macro def test
-     quote { `@call.target`.dostuff }
-  end
   
-  def dostuff
-    puts "foobarboo"
-  end
-
   def buildClass(html:String):String
     buildClass ByteArrayInputStream.new html.getBytes(StandardCharsets.UTF_8)
   end
-
+  
   def preprocessDom(doc:Document):void
     preprocessElement doc.body
   end
   
-  def preprocessElement(el:Element):void
-    if 'table'.equals el.tagName
-      tbody = findOne 'tbody', el
+  def preprocessTextAreaElement(el:Element):void
+      textContent = el.text
+      rows = if el.attr('rows') .length > 0
+          el.attr 'rows'
+      else
+          nil
+      end
+      cols = if el.attr('cols') .length > 0
+          el.attr 'cols'
+      else
+          nil
+      end
+      
       div = el.ownerDocument.createElement 'div'
-      el.attributes.each do |att|
-        div.attr att.getKey, att.getValue
-      end
-      rows = el.attr 'rows'
-      cols = el.attr 'cols'
+      el.attributes.each {|att| div.attr att.getKey, att.getValue}
+      div.attr 'class', 'TextArea'
       
-      if rows.length == 0
-        trTags = begin
-          if tbody
-            findChildren 'tr', tbody
-          else 
-            findChildren 'tr', el
-          end
-        end
-        rows = "#{trTags.length}"
+      if rows
+        script = el.ownerDocument.createElement 'script'
+        script.appendChild DataNode.new "self.setRows(#{rows});\n", ""
+        div.appendChild script
       end
-      
-      if cols.length == 0
-        numCols = 0
-        trTags = begin
-          if tbody
-            findChildren 'tr', tbody
-          else 
-            findChildren 'tr', el
-          end
-        end
-        trTags.each do |tr|
-          findChildren('td', tr).each do |td|
-            if td.attr('colspan').length > 0
-              numCols += Integer.parseInt(tr.attr('colspan'))
-            else
-              numCols += 1
-            end
-            break
-          end
-        end
-        
-        cols = "#{numCols}"
+      if cols
+        script = el.ownerDocument.createElement 'script'
+        script.appendChild DataNode.new "self.setColumns(#{cols});\n", ""
+        div.appendChild script
+      end
+      if textContent.length>0
+        script = el.ownerDocument.createElement 'script'
+        script.appendChild DataNode.new "self.setText(\"#{escape textContent}\");\n", ""
+        div.appendChild script
+      end
+      if el.attr('readonly').length>0
+        script = el.ownerDocument.createElement 'script'
+        script.appendChild DataNode.new "self.setEditable(false);\n", ""
+        div.appendChild script
       end
       
-      div.attr 'rows', rows
-      div.attr 'cols', cols
-      trTags = begin
-        if tbody
-          findChildren 'tr', tbody
-        else 
-          findChildren 'tr', el
-        end
+      findChildren('script', el).each do |scr|
+        scr.remove
+        div.appendChild(scr)
+      end
+      el.replaceWith(div)
+  end
+  
+  def preprocessTableElement(el:Element):void
+    tbody = findOne 'tbody', el
+    div = el.ownerDocument.createElement 'div'
+    el.attributes.each do |att|
+      div.attr att.getKey, att.getValue
+    end
+    rows = el.attr 'rows'
+    cols = el.attr 'cols'
+    
+    return if rows.length>0 and cols.length > 0
+    if rows.length == 0
+      trTags = if tbody
+        findChildren 'tr', tbody
+      else 
+        findChildren 'tr', el
+      end
+      
+      rows = "#{trTags.length}"
+    end
+    
+    if cols.length == 0
+      numCols = 0
+      trTags = if tbody
+        findChildren 'tr', tbody
+      else 
+        findChildren 'tr', el
       end
       
       trTags.each do |tr|
         findChildren('td', tr).each do |td|
-          cellDiv = el.ownerDocument.createElement 'div'
+          if td.attr('colspan').length > 0
+            numCols += Integer.parseInt(td.attr('colspan'))
+          else
+            numCols += 1
+          end
           
         end
+        break
       end
       
+      cols = "#{numCols}"
+    end
+    
+    div.attr 'layout', "TableLayout(#{rows},#{cols})"
+    trTags = if tbody
+      findChildren 'tr', tbody
+    else 
+      findChildren 'tr', el
+    end
+    
+    
+    # Grid to keep track of of row spans of each column
+    rowSpanStacks = []
+    Integer.parseInt(cols).times {|iter| rowSpanStacks[iter]=0}
+    
+      
+    currRow=0
+    trTags.each do |tr|
+      currCol=0
+      findChildren('td', tr).each do |td|
+        while rowSpanStacks[currCol].intValue > 0
+          rowSpanStacks[currCol] = rowSpanStacks[currCol].intValue-1
+          currCol += 1
+        end
+        cellDiv = el.ownerDocument.createElement 'div'
+        td.attributes.each {|att| cellDiv.attr att.getKey, att.getValue}
+        rowSpan=if td.attr('rowspan').length>0
+          Integer.parseInt(td.attr 'rowspan')
+        else
+          1
+        end
+        
+        colSpan=if td.attr('colspan').length>0
+          Integer.parseInt(td.attr 'colspan')
+        else
+          1
+        end
+        
+        if rowSpan > 1
+          currCol.upto(currCol+colSpan-1) do |colIter|
+            rowSpanStacks[colIter] = rowSpanStacks[currCol].intValue+rowSpan-1
+          end
+        end
+        script = el.ownerDocument.createElement 'script'
+        
+        
+        
+        scriptContent = "
+        TableLayout l = (TableLayout)parent.getLayout();
+        TableLayout.Constraint c = l.createConstraint(#{currRow},#{currCol});
+        c.setVerticalSpan(#{rowSpan});
+        c.setHorizontalSpan(#{colSpan});
+        parent.addComponent(c, self);
+        "
+        
+        script.html(scriptContent)
+        cellDiv.appendChild(script)
+        
+        tdChildren = td.childNodes.toArray Node[0]
+        tdChildren.each do |n| 
+          n.remove
+          cellDiv.appendChild n
+        end
+        div.appendChild cellDiv
+        currCol += 1
+      end
+      currRow += 1
+    end
+    
+    findChildren('script', el).each do |scr|
+      scr.remove
+      div.appendChild(scr)
+    end
+    
+    el.replaceWith div
+    
+    div.childNodes.each do |n| 
+      if n.kind_of? Element
+        preprocessElement Element(n)
+      end
     end
   end
-
+  
+  def preprocessSelectElement(el:Element):void
+      div = el.ownerDocument.createElement 'div'
+      el.attributes.each {|att| div.attr att.getKey, att.getValue}
+      if div.attr('class').length == 0 
+          if div.attr('size').length != 0
+              div.attr 'class', 'List'
+          else
+              div.attr 'class', 'ComboBox'
+          end
+          
+      end
+      script = el.ownerDocument.createElement 'script'
+      scriptContent = StringBuilder.new
+      scriptContent << "java.util.ArrayList opts = new java.util.ArrayList();\n"
+      foundChild=false
+      findChildren('option', el).each do |opt|
+          foundChild=true
+          scriptContent << "opts.add(\"#{escapeHtml opt.text}\");\n"
+      end
+      if foundChild
+        scriptContent << "self.setModel(new com.codename1.ui.list.DefaultListModel(opts));\n"
+        script.appendChild(DataNode.new scriptContent.toString, "")
+      
+        div.appendChild script
+      end
+        
+      
+      if el.attr('model').length > 0 
+          script = el.ownerDocument.createElement 'script'
+          script.appendChild(DataNode.new "self.setModel(#{el.attr('model')});\n","")
+          div.appendChild script
+      elsif el.attr('data').length > 0
+          script = el.ownerDocument.createElement 'script'
+          script.appendChild(DataNode.new "self.setModel(new com.codename1.ui.list.DefaultListModel(#{el.attr('data')}));\n","")
+          div.appendChild script
+      end
+      
+      findChildren('script', el).each do |scr|
+        scr.remove
+        div.appendChild(scr)
+      end
+      el.replaceWith(div)
+      
+      
+  end
+  
+  def preprocessElement(el:Element):void
+    if 'table'.equals el.tagName
+      preprocessTableElement el
+    elsif 'select'.equals el.tagName
+      preprocessSelectElement el
+    elsif 'textarea'.equals el.tagName
+      preprocessTextAreaElement el
+    else
+      el.childNodes.each do |n| 
+        if n.kind_of? Element
+          preprocessElement Element(n)
+        end
+      end
+    end
+    
+    
+  end
+  
   def findOne(tagName:String, root:Element):Element
     return root if tagName.equals root.tagName
     root.childNodes.each do |node|
@@ -172,9 +332,10 @@ class CN1ML
     end
     out.toArray Element[0]
   end
-
+  
   def buildClass(input:InputStream):String
     doc = Jsoup.parse(input, 'UTF-8', '/')
+    preprocessDom doc
     output = StringBuilder.new
     writeHeader(output, doc)
     writeConstructor(output, doc)
@@ -350,6 +511,8 @@ class CN1ML
     el.attr("java-varName", varName)
     @varCounter += 1
     
+    parentClassName = Element(el.parentNode).attr('java-className')
+    
     className = getElementUIClass(el)
     el.attr('java-className', className)
     output << "#{className} #{varName} = new #{className}();\n"
@@ -376,13 +539,17 @@ class CN1ML
       }\n"
     end
     
-    
-    
-    writeAddToParent(output, parentVarName, varName, el) if parentVarName
-    
     el.childNodes.each do |childNode|
-      writeChild(output, el, childNode, varName, className)
+      writeChild(
+        output, 
+        el, 
+        childNode, 
+        varName, 
+        className, 
+        parentVarName, 
+        parentClassName)
     end
+    writeAddToParent(output, parentVarName, varName, el) if parentVarName
     
   end
   
@@ -391,11 +558,15 @@ class CN1ML
       el:Element, 
       scriptEl:Element, 
       varName:String, 
-      className:String):void
+      className:String,
+      parentVarName:String,
+      parentClassName:String):void
+    @scriptIDCounter ||= 1
     if "script".equals scriptEl.tagName
-      output << "init_#{varName}(#{varName});\n"
-      tailBuffer << "private void init_#{varName}(#{className} self){\n" <<
-        scriptEl.html << "\n}\n"
+      output << "init#{@scriptIDCounter}_#{varName}(#{varName}, #{parentVarName});\n"
+      tailBuffer << "private void init#{@scriptIDCounter}_#{varName}(#{className} self, #{parentClassName} parent){\n" <<
+        scriptEl.data << scriptEl.text << "\n}\n"
+      @scriptIDCounter += 1
     end
   end
   
@@ -423,7 +594,7 @@ class CN1ML
           end
         end
       else
-
+        
         output << "#{varName}.addComponent(new Label(#{src}));\n"
       end
     end
@@ -434,32 +605,37 @@ class CN1ML
       el:Element, 
       childNode:Node, 
       varName:String, 
-      className:String):void
-
+      className:String,
+      parentVarName:String,
+      parentClassName:String):void
+      
     if childNode.kind_of? Element
-        childEl = Element(childNode)
-        if "script".equals childEl.tagName
-          writeChildScript(output,el,childEl,varName,className)
-        elsif "img".equals childEl.tagName
-          writeChildImg(output, el, childEl, varName, className)
-        else
-          writeNode output, varName, childNode
-          
-        end
+      childEl = Element(childNode)
+      if "script".equals childEl.tagName
+        writeChildScript(output,el,childEl,varName,className,parentVarName,parentClassName)
+      elsif "img".equals childEl.tagName
+        writeChildImg(output, el, childEl, varName, className)
       else
-        if childNode.kind_of? TextNode
-          tx = escape TextNode(childNode).text
-          if ['Label','Button'].contains className and tx.trim.length>0
-            output << "#{varName}.setText(\"#{tx}\");\n"
-          elsif tx and tx.trim.length>0
-            output << "#{varName}.addComponent(new Label(\"#{tx}\"));\n"
-          end
+        writeNode output, varName, childNode
+      end
+    else
+      if childNode.kind_of? TextNode
+        tx = escape TextNode(childNode).text
+        if ['Label','Button'].contains className and tx.trim.length>0
+          output << "#{varName}.setText(\"#{tx}\");\n"
+        elsif tx and tx.trim.length>0
+          output << "#{varName}.addComponent(new Label(\"#{tx}\"));\n"
         end
-      end 
+      end
+    end 
   end
   
   def escape(str:String):String
-    str.replaceAll('\\\\', '\\\\').replaceAll('"','\\"')
+    str.replaceAll('\\\\', '\\\\').replaceAll('"','\\\\"')
+  end
+  
+  def escapeHtml(str:String):String
+      escape(str)
   end
   
   def getImgSrc(el:Element):String
@@ -490,7 +666,7 @@ class CN1ML
   end
   
   def getElementUIClass(el:Element):String
-    el.attr('class') if el.attr('class').length>0
+    return el.attr('class') if el.attr('class').length>0
     return String(@@UIClasses[el.tagName.toLowerCase]) if @@UIClasses[el.tagName.toLowerCase]
     if 'input'.equals el.tagName.toLowerCase
         type = el.attr 'type'
@@ -509,16 +685,18 @@ class CN1ML
       varName:String, 
       el:Element):void
     return if ['tr,tbody,thead,tfoot'].contains el.tagName
-    puts "Adding #{el.tagName} to parent"
+    
     parentClass = getElementUIClass(Element(el.parentNode))
     parentLayoutClass = getElementUIClass(Element(el.parentNode))
     
     constraint = getLayoutConstraint(el)
+    output << "if (#{parentVarName} != #{varName}.getParent()){\n"
     if !constraint
       output << "#{parentVarName}.addComponent(#{varName});\n"
     else
       output << "#{parentVarName}.addComponent(#{constraint}, #{varName});\n"
     end
+    output << "}\n"
   end
     
   def getLayoutConstraint(el:Element):String
@@ -585,6 +763,5 @@ class CN1ML
     @tailBuffer ||= StringBuilder.new
   end
   
-
+  
 end
-

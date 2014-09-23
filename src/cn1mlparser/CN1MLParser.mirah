@@ -5,7 +5,7 @@
  */
 
 package cn1mlparser
-
+import ca.weblite.codename1.cn1ml.CN1ML
 /**
  *
  * @author shannah
@@ -14,3 +14,5 @@ class CN1MLParser
 	
 end
 
+puts 'here'
+cls = CN1ML.new 'mypkg.Hello'
