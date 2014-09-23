@@ -77,6 +77,102 @@ class CN1ML
     buildClass ByteArrayInputStream.new html.getBytes(StandardCharsets.UTF_8)
   end
 
+  def preprocessDom(doc:Document):void
+    preprocessElement doc.body
+  end
+  
+  def preprocessElement(el:Element):void
+    if 'table'.equals el.tagName
+      tbody = findOne 'tbody', el
+      div = el.ownerDocument.createElement 'div'
+      el.attributes.each do |att|
+        div.attr att.getKey, att.getValue
+      end
+      rows = el.attr 'rows'
+      cols = el.attr 'cols'
+      
+      if rows.length == 0
+        trTags = begin
+          if tbody
+            findChildren 'tr', tbody
+          else 
+            findChildren 'tr', el
+          end
+        end
+        rows = "#{trTags.length}"
+      end
+      
+      if cols.length == 0
+        numCols = 0
+        trTags = begin
+          if tbody
+            findChildren 'tr', tbody
+          else 
+            findChildren 'tr', el
+          end
+        end
+        trTags.each do |tr|
+          findChildren('td', tr).each do |td|
+            if td.attr('colspan').length > 0
+              numCols += Integer.parseInt(tr.attr('colspan'))
+            else
+              numCols += 1
+            end
+            break
+          end
+        end
+        
+        cols = "#{numCols}"
+      end
+      
+      div.attr 'rows', rows
+      div.attr 'cols', cols
+      trTags = begin
+        if tbody
+          findChildren 'tr', tbody
+        else 
+          findChildren 'tr', el
+        end
+      end
+      
+      trTags.each do |tr|
+        findChildren('td', tr).each do |td|
+          cellDiv = el.ownerDocument.createElement 'div'
+          
+        end
+      end
+      
+    end
+  end
+
+  def findOne(tagName:String, root:Element):Element
+    return root if tagName.equals root.tagName
+    root.childNodes.each do |node|
+      if node.kind_of? Element
+        el = Element(node)
+        return el if tagName.equals el.tagName
+      end
+    end
+    root.childNodes.each do |node|
+      if node.kind_of? Element
+        el = Element(node)
+        res = findOne tagName, el
+        return res if res
+      end
+    end
+    
+    nil
+  end
+  
+  def findChildren(tagName:String, root:Element):Element[]
+    out = []
+    root.childNodes.each do |node|
+      out.add node if node.kind_of? Element and 
+          tagName.equals Element(node).tagName
+    end
+    out.toArray Element[0]
+  end
+
   def buildClass(input:InputStream):String
     doc = Jsoup.parse(input, 'UTF-8', '/')
     output = StringBuilder.new
